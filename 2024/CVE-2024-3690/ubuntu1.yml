@@ -1,0 +1,180 @@
+---
+- name: Deploy PHPGurukul Small CRM 3.0 Vulnerable Instance
+  hosts: ubuntu1
+  become: yes
+  vars:
+    mysql_root_pw: "dn123"
+    crm_db_name: "crm"
+    crm_db_user: "crm"
+    crm_db_password: "crm"
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - apache2
+          - mysql-server
+          - php
+          - php-mysql
+          - php-curl
+          - unzip
+          - wget
+          - python3
+          - curl
+          - python3-pymysql
+          - acl
+        state: present
+
+    - name: Enable Apache rewrite module
+      apache2_module:
+        name: rewrite
+        state: present
+
+    - name: Enable and start MySQL service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Set ownership of /var/www/html to www-data:www-data
+      ansible.builtin.file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Add ACLs to give MySQL
+      ansible.builtin.command:
+        cmd: setfacl -m u:mysql:rwx /var/www/html
+
+    - name: Add ACLs to give www-data
+      ansible.builtin.command:
+        cmd: setfacl -m u:www-data:rwx /var/www/html
+
+    - name: Set setgid on /var/www/html
+      ansible.builtin.file:
+        path: /var/www/html
+        mode: 'g+s'
+
+    - name: Copy flag.txt into /flag.txt
+      template:
+        src: ./data/flag.txt
+        dest: /flag.txt
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Add configuration line to conf file
+      ansible.builtin.lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        line: secure_file_priv   = ""
+        insertafter: EOF
+
+    - name: Add apparmor conf lines
+      ansible.builtin.blockinfile:
+        path: /etc/apparmor.d/usr.sbin.mysqld
+        block: |
+          # Write to /var/www/html/
+            /var/www/html/ rw,
+            /var/www/html/* rw,
+        insertbefore: "^}$"
+
+    - name: Extract CRM
+      ansible.builtin.unarchive:
+        src: ./data/crm.tar.gz
+        dest: /tmp/
+        owner: www-data
+        group: www-data
+
+    - name: Move CRM folder
+      copy:
+        src: "/tmp/Small CRM Projects Using PHP and MySQL/crm/"
+        dest: /var/www/html/crm/
+        mode: '0755'
+        remote_src: yes
+
+    - name: Copy dbconnection.php
+      template:
+        src: ./data/dbconnection.php
+        dest: /var/www/html/crm/dbconnection.php
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Update username in dbconnection.php
+      replace:
+        path: /var/www/html/crm/dbconnection.php
+        regexp: "username"
+        replace: "{{ crm_db_user }}"
+        owner: www-data
+        group: www-data
+
+    - name: Update password in dbconnection.php
+      replace:
+        path: /var/www/html/crm/dbconnection.php
+        regexp: "password"
+        replace: "{{ crm_db_password }}"
+        owner: www-data
+        group: www-data
+
+    - name: Create user for MySQL
+      mysql_user:
+        name: "{{ crm_db_user }}"
+        password: "{{ crm_db_password }}"
+        host: localhost
+        priv: "{{ crm_db_name }}.*:ALL PRIVILEGES"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create CRM database
+      mysql_db:
+        name: "{{ crm_db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+          #register: crm_db_check
+
+    - name: Import SQL file to create database schema
+      mysql_db:
+        name: "{{ crm_db_name }}"
+        state: import
+        target: "/tmp/Small CRM Projects Using PHP and MySQL/SQL File/crm.sql"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+          #when: crm_db_check.failed
+
+    - name: Grant FILE priv to root user on localhost
+      mysql_query:
+        query: "GRANT FILE ON *.* TO 'root'@'localhost';"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Grant FILE priv to db user on localhost
+      mysql_query:
+        query: "GRANT FILE ON *.* TO '{{ crm_db_user }}'@'localhost';"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Restart MySQL
+      ansible.builtin.systemd:
+        name: mysql
+        state: restarted
+
+    - name: Restart AppArmomr service
+      ansible.builtin.command:
+        cmd: /etc/init.d/apparmor restart
+
+    - name: Output completion message
+      debug:
+        msg: "PHPGurukul Small CRM 3.0 Vulnerable Instance has been deployed!"
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart MySQL
+      ansible.builtin.service:
+        name: mysql
+        state: restarted

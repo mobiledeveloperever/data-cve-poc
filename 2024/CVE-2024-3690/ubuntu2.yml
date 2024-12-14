@@ -1,0 +1,29 @@
+---
+- name: Exploit SQL Injection Vulnerability in Small CRM 3.0 (CVE-2024-3690)
+  hosts: ubuntu2
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - curl
+        state: present
+        update_cache: yes
+
+    - name: Create exploit directory
+      file:
+        path: /opt/exploit
+        state: directory
+        mode: '0755'
+
+    - name: Copy exploit script
+      copy:
+        src: data/exploit.sh
+        dest: /opt/exploit/exploit.sh
+        mode: '0755'
